@@ -9,7 +9,6 @@
   <script src="https://unpkg.com/@jspsych/plugin-audio-button-response@2.1.1"></script>
   <script src="https://unpkg.com/@jspsych/plugin-preload@2.1.0"></script>
   <script src="https://unpkg.com/@jspsych/plugin-survey-html-form@2.1.0"></script>
-  <script src="https://unpkg.com/@jspsych-contrib/plugin-pipe@0.6.0"></script>
   <link rel="stylesheet" href="https://unpkg.com/jspsych@8.3.0/css/jspsych.css">
   <style>
     .jspsych-btn { font-size: 26px; min-width: 110px; }
@@ -55,6 +54,9 @@ const INCLUDE_LOWPASS = true;
 // DataPipe experiment ID (from pipe.jspsych.org). Leave "" while testing:
 // the data then download to your own computer as a CSV at the end.
 const DATAPIPE_ID = "C0Igq3GW9PsF";
+
+// Shown to participants only if their data could not be uploaded, so they can email you the file.
+const CONTACT_EMAIL = "pwodarz@berkeley.edu";
 
 // Answer buttons for each word, in the order shown. Saved in the data as T3 / T1.
 const CHOICES = {
@@ -141,21 +143,36 @@ const welcome = {
   choices: ["Start"]
 };
 
-const assignGroup = {   // only runs when no ?group= was given and DataPipe is set up
-  timeline: [{
-    type: jsPsychPipe, action: "condition", experiment_id: DATAPIPE_ID,
-    on_finish: d => { GROUP = (d.result === 1 ? "5" : "2"); }   // DataPipe gives 0, 1, 0, 1, ...
-  }],
-  conditional_function: () => GROUP === null && DATAPIPE_ID !== ""
-};
-const fallbackGroup = {
-  type: jsPsychHtmlKeyboardResponse, stimulus: "", choices: "NO_KEYS", trial_duration: 0,
-  on_start: () => { if (GROUP === null) GROUP = Math.random() < 0.5 ? "2" : "5"; },
-  on_finish: d => {
-    jsPsych.data.addProperties({ participant_id: PARTICIPANT, group: GROUP + "st",
+// Ask DataPipe for a group (alternates 0, 1, 0, 1, ...). If DataPipe doesn't answer within
+// 8 seconds, or condition assignment is switched off, the group is picked at random instead.
+async function postJSON(url, body, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { method: "POST", signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", Accept: "*/*" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    return r.ok ? j : Object.assign({ error: "HTTP " + r.status }, j);
+  } catch (e) { return { error: String(e) }; }
+  finally { clearTimeout(timer); }
+}
+let GROUP_SOURCE = GROUP ? "link" : null;
+const assignGroup = {
+  type: jsPsychHtmlKeyboardResponse, choices: "NO_KEYS",
+  stimulus: "<p>Loading…</p>",
+  data: { task: "setup" },
+  on_load: async () => {
+    if (GROUP === null && DATAPIPE_ID !== "") {
+      const res = await postJSON("https://pipe.jspsych.org/api/condition/", { experimentID: DATAPIPE_ID }, 8000);
+      if (res && !res.error && Number.isInteger(res.condition)) {
+        GROUP = res.condition === 1 ? "5" : "2"; GROUP_SOURCE = "datapipe";
+      }
+    }
+    if (GROUP === null) { GROUP = Math.random() < 0.5 ? "2" : "5"; GROUP_SOURCE = "random"; }
+    jsPsych.data.addProperties({ participant_id: PARTICIPANT, group: GROUP + "st", group_source: GROUP_SOURCE,
                                  block_order: BLOCK_ORDER.join(" > "), lowpass_included: INCLUDE_LOWPASS });
-  },
-  data: { task: "setup" }
+    jsPsych.finishTrial();
+  }
 };
 
 const preload = {
@@ -280,28 +297,45 @@ const demographics = {
   on_finish: d => jsPsych.data.addProperties(d.response)
 };
 
+// Save to DataPipe (tries 3 times, up to 30 s each). If it still fails, the CSV is downloaded
+// on the participant's computer and they are asked to send it to you.
 const dataCSV = () => jsPsych.data.get().filter({ task: "tone" }).csv();
+let SAVED = false;
 const saveData = {
-  timeline: [{
-    type: jsPsychPipe, action: "save", experiment_id: DATAPIPE_ID,
-    filename: () => `${PARTICIPANT}.csv`, data_string: dataCSV
-  }],
-  conditional_function: () => DATAPIPE_ID !== ""
+  type: jsPsychHtmlKeyboardResponse, choices: "NO_KEYS",
+  stimulus: "<p>Saving your responses… please do not close this page.</p>",
+  data: { task: "setup" },
+  on_load: async () => {
+    if (DATAPIPE_ID !== "") {
+      for (let attempt = 0; attempt < 3 && !SAVED; attempt++) {
+        const res = await postJSON("https://pipe.jspsych.org/api/data/",
+          { experimentID: DATAPIPE_ID, filename: `${PARTICIPANT}.csv`, data: dataCSV() }, 30000);
+        SAVED = !!res && !res.error;
+      }
+    }
+    if (!SAVED) jsPsych.data.get().filter({ task: "tone" }).localSave("csv", `${PARTICIPANT}_${GROUP}st.csv`);
+    jsPsych.finishTrial();
+  }
 };
-const saveLocal = {
+const saveFailed = {
   timeline: [{
-    type: jsPsychHtmlKeyboardResponse, stimulus: "", choices: "NO_KEYS", trial_duration: 0,
-    on_finish: () => jsPsych.data.get().filter({ task: "tone" })
-                       .localSave("csv", `${PARTICIPANT}_${GROUP}st.csv`)
+    type: jsPsychHtmlButtonResponse, choices: [],
+    stimulus: () => `<p class="instructions">Thank you for participating! Your responses could not be uploaded
+      automatically, so a file named <b>${PARTICIPANT}_${GROUP}st.csv</b> has been downloaded to your computer
+      (usually in your Downloads folder).</p>
+      <p class="instructions">${CONTACT_EMAIL ? `Please email this file to <b>${CONTACT_EMAIL}</b>.`
+                                               : "Please send this file to the researcher."}</p>`
   }],
-  conditional_function: () => DATAPIPE_ID === ""
+  conditional_function: () => !SAVED && DATAPIPE_ID !== ""
 };
 const thanks = {
-  type: jsPsychHtmlButtonResponse,
-  stimulus: "<p>Thank you for participating! You may now close this window.</p>",
-  choices: []
+  timeline: [{
+    type: jsPsychHtmlButtonResponse, choices: [],
+    stimulus: "<p>Thank you for participating! You may now close this window.</p>"
+  }],
+  conditional_function: () => SAVED || DATAPIPE_ID === ""
 };
 
-jsPsych.run([welcome, assignGroup, fallbackGroup, checkFiles, missingFiles, preload, ...blocks, demographics, saveData, saveLocal, thanks]);
+jsPsych.run([welcome, assignGroup, checkFiles, missingFiles, preload, ...blocks, demographics, saveData, saveFailed, thanks]);
 </script>
 </html>
