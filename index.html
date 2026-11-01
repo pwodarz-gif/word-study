@@ -58,6 +58,10 @@ const DATAPIPE_ID = "C0Igq3GW9PsF";
 // Shown to participants only if their data could not be uploaded, so they can email you the file.
 const CONTACT_EMAIL = "pwodarz@berkeley.edu";
 
+// Prolific completion link: participants are sent here at the end so they get paid.
+const COMPLETION_CODE = "CEYSWIJQ";
+const COMPLETION_URL = "https://app.prolific.com/submissions/complete?cc=" + COMPLETION_CODE;
+
 // Answer buttons for each word, in the order shown. Saved in the data as T3 / T1.
 const CHOICES = {
   xiang: [["想", "T3"], ["香", "T1"]],
@@ -134,6 +138,82 @@ const BLOCK_TEXT = {
   medial:  "In this section, you will identify the meaning of words in the middle of the phrase. " +
            "Before each phrase, you will be told which word to listen for."
 };
+
+
+// =============================================================================
+// INFORMED CONSENT (shown first; nothing else runs until the participant agrees)
+// =============================================================================
+const CONSENT_TEXT = `
+<h2>Informed Consent</h2>
+<h3>Investigator's statement</h3>
+<p>I am asking you to be in a research study for a project in the linguistics department at UC Berkeley. The purpose of this consent form is to give you the information you will need to help you decide whether or not to be in the study. Please read the form carefully. You may ask questions about the purpose of the research, what we would ask you to do, the possible risks and benefits, your rights as a volunteer, and anything else about the research or this form that is not clear. When all your questions have been answered, you can decide if you want to be in the study or not. This process is called ‘informed consent.’</p>
+<h3>Purpose</h3>
+<p>The study explores Mandarin speech and word identification. You have been asked to participate because you are a Mandarin speaker.</p>
+<h3>Benefits</h3>
+<p>Personal benefits are in the form of payment given upon successfully completing the study ($4.67, 28.02/hr).</p>
+<h3>Procedures</h3>
+<p>The experiment will take approximately 10 minutes to complete. You will be asked to listen to a series of short audio clips, and to identify what you hear by clicking an answer choice on your device.</p>
+<h3>Risks, stress, or discomfort</h3>
+<p>Risks for participating in this study are minimal to none. You may experience some boredom and/or loss of concentration during the course of undergoing the tasks.</p>
+<h3>Participation &amp; private information</h3>
+<p>The answers from this study will be analyzed; you will not be identified by name in any publications about the results of this study. You may refuse to participate or may withdraw from the study at any time without penalty.</p>
+<h3>Contact information</h3>
+<p>If at any time you have questions regarding the research or your participation, you should contact the investigator, Paulina Wodarz, who will answer all questions. Her telephone number is (949) 910-3544. If at any time you have comments regarding the conduct of this research or questions about your rights as a research participant, you should contact the Institutional Review Board (IRB) Administrator at (212) 851-7040.</p>
+<h3>Participant's statement</h3>
+<p>I have read the above purpose of the study, and understand my role in participating in the research. I volunteer to take part in this research. I have had a chance to ask questions. If I have questions later, about the research, I can ask the investigator listed above. I understand that I may refuse to participate or withdraw from participation at any time without jeopardizing my employment, student status or other rights to which I am entitled. The investigator may withdraw me at his/her professional discretion. If I have questions about my rights as a research participant, I can call the Institutional Review Board office at (212) 851-7040. I certify that I am 18 years of age or older and freely give my consent to participate in this study. I will receive a copy of this document for my records.</p>`;
+
+// "Download or print a copy": opens the form in a new tab with a print button
+function openConsentCopy() {
+  const w = window.open("", "_blank");
+  if (!w) { alert("Please allow pop-ups to open a copy of this form."); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Consent form – copy</title>
+    <style>body{font-family:Georgia,serif;max-width:700px;margin:40px auto;padding:0 20px;line-height:1.55}
+    h3{margin-top:1.4em} @media print{button{display:none}}</style></head><body>
+    <button onclick="window.print()" style="font-size:16px;padding:6px 14px">Print / save as PDF</button>
+    ${CONSENT_TEXT}</body></html>`);
+  w.document.close();
+}
+
+let CONSENTED = false;
+const consent = {
+  type: jsPsychSurveyHtmlForm,
+  html: `
+    <style>
+      .consent { text-align:left; max-width:720px; margin:0 auto; line-height:1.55; font-size:16px }
+      .consent h2 { text-align:center } .consent h3 { margin:1.2em 0 .3em; font-size:17px }
+      .consent .box { border:1px solid #ccc; border-radius:6px; padding:16px; margin-top:24px; background:#fafafa }
+      .consent input[type=text] { font:inherit; padding:6px 8px; width:100%; box-sizing:border-box }
+      .consent .row { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px }
+      .consent .linkbtn { background:none; border:none; color:#1d4e89; text-decoration:underline; cursor:pointer; font:inherit; padding:0 }
+    </style>
+    <div class="consent">
+      ${CONSENT_TEXT}
+      <p><button type="button" class="linkbtn" onclick="openConsentCopy()">Download or print a copy of this form</button></p>
+      <div class="box">
+        <p><b>Please type your full name below as your signature</b> to confirm that you have read this form
+           and agree to take part.</p>
+        <input type="text" name="consent_signature" required autocomplete="name" placeholder="Full name">
+        <p style="color:#666;font-size:14px;margin-bottom:0">Date: ${new Date().toLocaleDateString()}</p>
+      </div>
+    </div>`,
+  button_label: "I agree, continue",
+  on_load: () => {
+    // add an "I do not agree" button next to the agree button
+    const next = document.getElementById("jspsych-survey-html-form-next");
+    const no = document.createElement("button");
+    no.type = "button"; no.className = "jspsych-btn"; no.textContent = "I do not agree";
+    no.style.marginLeft = "12px";
+    no.onclick = () => jsPsych.abortExperiment(
+      `<p class="instructions">You have chosen not to take part, and no responses have been recorded.</p>
+       <p class="instructions">If you came from Prolific, please return to Prolific and click
+       <b>“Return submission”</b> so your place can go to someone else. You may now close this window.</p>`);
+    next.after(no);
+  },
+  data: { task: "consent" },
+  on_finish: d => { if (!d.response) return;   // "I do not agree" ends the study here
+    CONSENTED = true; jsPsych.data.addProperties({ consent_given: true, consent_time: new Date().toISOString() }); CONSENT_RECORD = { name: d.response.consent_signature, time: new Date().toISOString() }; }
+};
+let CONSENT_RECORD = null;
 
 const welcome = {
   type: jsPsychHtmlButtonResponse,
@@ -238,6 +318,32 @@ function trialsFor(item) {
   ];
 }
 
+// One break question halfway through each block (after trial 16). The three questions are
+// shuffled for each participant, so no question is tied to a particular block.
+const BREAK_QUESTIONS = jsPsych.randomization.shuffle([
+  { name: "break_headphones",
+    text: "Please type in the brand or type of the headphones you are using; if you are not wearing " +
+          "headphones, describe the room in which this experiment is being conducted." },
+  { name: "break_time_of_day",
+    text: "What time of day is this experiment being conducted for you?" },
+  { name: "break_prolific",
+    text: "How long have you been using the platform Prolific?" }
+]);
+function breakTrial(q, b) {
+  return {
+    type: jsPsychSurveyHtmlForm,
+    preamble: `<p style="color:#888">Short break</p>`,
+    html: `<div class="demo"><div class="q">${q.text}</div>
+           <textarea name="${q.name}" rows="3" required></textarea></div>`,
+    button_label: "Continue",
+    data: { task: "break_question", question: q.name, block: b + 1 },
+    on_finish: d => jsPsych.data.addProperties({
+      [q.name]: d.response[q.name],
+      [q.name + "_block"]: b + 1
+    })
+  };
+}
+
 const blocks = [];
 BLOCK_ORDER.forEach((pos, b) => {
   blocks.push({
@@ -245,7 +351,9 @@ BLOCK_ORDER.forEach((pos, b) => {
     stimulus: `<p style="color:#888">Part ${b + 1} of 3</p><p class="instructions">${BLOCK_TEXT[pos]}</p>`,
     choices: ["Begin"], data: { task: "block_instructions", position: pos }
   });
+  const half = Math.ceil(ORDERED[b].length / 2);
   ORDERED[b].forEach((item, k) => {
+    if (k === half) blocks.push(breakTrial(BREAK_QUESTIONS[b], b));
     blocks.push(...trialsFor({ ...item, _block: b + 1, _k: k + 1 }));
   });
 });
@@ -257,20 +365,27 @@ const demographics = {
     <div class="demo">
       <div class="q">Age</div>
       <input type="number" name="age" min="18" max="100" required>
+
       <div class="q">Gender</div>
       <input type="text" name="gender" required>
+
       <div class="q">How proficient are you in Mandarin?</div>
       <div class="scale">
         ${[1,2,3,4,5].map(n => `<label><input type="radio" name="mandarin_proficiency" value="${n}" required>${n}</label>`).join("")}
       </div>
       <div class="ends"><span>1 = can understand, but have difficulty speaking</span><span>5 = native</span></div>
-      <div class="q">Do you have a musical background?</div>
-      <label><input type="radio" name="music_background" value="yes" required> Yes</label>&nbsp;&nbsp;
-      <label><input type="radio" name="music_background" value="no"> No</label>
-      <div id="music_box" class="hidden">
-        <div class="q" style="font-weight:400">If so, please briefly elaborate:</div>
-        <textarea name="music_details" rows="3"></textarea>
+
+      <div class="q">Do you speak Cantonese?</div>
+      <label><input type="radio" name="cantonese" value="yes" required> Yes</label>&nbsp;&nbsp;
+      <label><input type="radio" name="cantonese" value="no"> No</label>
+      <div id="cantonese_box" class="hidden">
+        <div class="q" style="font-weight:400">How proficient are you in Cantonese?</div>
+        <div class="scale">
+        ${[1,2,3,4,5].map(n => `<label><input type="radio" name="cantonese_proficiency" value="${n}" required>${n}</label>`).join("")}
       </div>
+      <div class="ends"><span>1 = can understand, but have difficulty speaking</span><span>5 = native</span></div>
+      </div>
+
       <div class="q">Is Mandarin your first language?</div>
       <label><input type="radio" name="mandarin_L1" value="yes" required> Yes</label>&nbsp;&nbsp;
       <label><input type="radio" name="mandarin_L1" value="no"> No</label>
@@ -278,27 +393,49 @@ const demographics = {
         <div class="q" style="font-weight:400">If not, what is your first language?</div>
         <input type="text" name="first_language">
       </div>
+
+      <div class="q">Do you speak any other languages, and if so, which ones?</div>
+      <textarea name="other_languages" rows="2" required></textarea>
+
+      <div class="q">Have you or do you currently play an instrument or sing?</div>
+      <label><input type="radio" name="music_background" value="yes" required> Yes</label>&nbsp;&nbsp;
+      <label><input type="radio" name="music_background" value="no"> No</label>
+      <div id="music_box" class="hidden">
+        <div class="q" style="font-weight:400">Please describe further: when and for how long? In what capacity
+          (e.g. professionally, took lessons weekly, or recreationally)?</div>
+        <textarea name="music_details" rows="3"></textarea>
+      </div>
+
+      <div class="q">Do you have any hearing or neurodevelopmental conditions (e.g., hearing impairment, ADHD, etc.)?
+        If none, please write "None".</div>
+      <textarea name="conditions" rows="2" required></textarea>
+
+      <div class="q">Please enter your Prolific ID.</div>
+      <input type="text" name="prolific_id" required value="${params.get("PROLIFIC_PID") || ""}">
     </div>`,
   button_label: "Submit",
   on_load: () => {
+    // show a follow-up only for the answer that needs it; hidden follow-ups are not required and are cleared
     const toggle = (name, showIf, boxId) => {
       document.querySelectorAll(`input[name=${name}]`).forEach(r =>
         r.addEventListener("change", () => {
           const box = document.getElementById(boxId), show = r.value === showIf;
           box.classList.toggle("hidden", !show);
-          const field = box.querySelector("input, textarea");
-          field.required = show; if (!show) field.value = "";
+          box.querySelectorAll("input, textarea").forEach(f => {
+            f.required = show;
+            if (!show) { if (f.type === "radio") f.checked = false; else f.value = ""; }
+          });
         }));
     };
-    toggle("music_background", "yes", "music_box");
+    toggle("cantonese", "yes", "cantonese_box");
     toggle("mandarin_L1", "no", "l1_box");
+    toggle("music_background", "yes", "music_box");
   },
   data: { task: "demographics" },
-  on_finish: d => jsPsych.data.addProperties(d.response)
+  on_finish: d => jsPsych.data.addProperties(Object.assign(
+    { cantonese_proficiency: "", first_language: "", music_details: "" }, d.response))
 };
 
-// Save to DataPipe (tries 3 times, up to 30 s each). If it still fails, the CSV is downloaded
-// on the participant's computer and they are asked to send it to you.
 const dataCSV = () => jsPsych.data.get().filter({ task: "tone" }).csv();
 let SAVED = false;
 const saveData = {
@@ -306,6 +443,12 @@ const saveData = {
   stimulus: "<p>Saving your responses… please do not close this page.</p>",
   data: { task: "setup" },
   on_load: async () => {
+    if (DATAPIPE_ID !== "" && CONSENT_RECORD) {
+      // consent record (typed name) is saved as its own file, so names are kept apart from responses
+      const c = `"participant_id","consent_signature","consent_time"\n"${PARTICIPANT}","${String(CONSENT_RECORD.name).replace(/"/g, '""')}","${CONSENT_RECORD.time}"\n`;
+      await postJSON("https://pipe.jspsych.org/api/data/",
+        { experimentID: DATAPIPE_ID, filename: `consent_${PARTICIPANT}.csv`, data: c }, 30000);
+    }
     if (DATAPIPE_ID !== "") {
       for (let attempt = 0; attempt < 3 && !SAVED; attempt++) {
         const res = await postJSON("https://pipe.jspsych.org/api/data/",
@@ -324,18 +467,23 @@ const saveFailed = {
       automatically, so a file named <b>${PARTICIPANT}_${GROUP}st.csv</b> has been downloaded to your computer
       (usually in your Downloads folder).</p>
       <p class="instructions">${CONTACT_EMAIL ? `Please email this file to <b>${CONTACT_EMAIL}</b>.`
-                                               : "Please send this file to the researcher."}</p>`
+                                               : "Please send this file to the researcher."}</p>
+      <p class="instructions">Your Prolific completion code is <b>${COMPLETION_CODE}</b>.
+      <a href="${COMPLETION_URL}">Click here to return to Prolific</a>.</p>`
   }],
   conditional_function: () => !SAVED && DATAPIPE_ID !== ""
 };
 const thanks = {
   timeline: [{
-    type: jsPsychHtmlButtonResponse, choices: [],
-    stimulus: "<p>Thank you for participating! You may now close this window.</p>"
+    type: jsPsychHtmlButtonResponse, choices: ["Return to Prolific"],
+    stimulus: `<p class="instructions">Thank you for participating! Your responses have been saved.</p>
+               <p class="instructions">Click the button below to return to Prolific and complete your submission.
+               If it doesn't work, your completion code is <b>${COMPLETION_CODE}</b>.</p>`,
+    on_finish: () => { window.location.href = COMPLETION_URL; }
   }],
   conditional_function: () => SAVED || DATAPIPE_ID === ""
 };
 
-jsPsych.run([welcome, assignGroup, checkFiles, missingFiles, preload, ...blocks, demographics, saveData, saveFailed, thanks]);
+jsPsych.run([consent, welcome, assignGroup, checkFiles, missingFiles, preload, ...blocks, demographics, saveData, saveFailed, thanks]);
 </script>
 </html>
