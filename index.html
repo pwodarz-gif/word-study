@@ -189,12 +189,7 @@ const consent = {
     <div class="consent">
       ${CONSENT_TEXT}
       <p><button type="button" class="linkbtn" onclick="openConsentCopy()">Download or print a copy of this form</button></p>
-      <div class="box">
-        <p><b>Please type your full name below as your signature</b> to confirm that you have read this form
-           and agree to take part.</p>
-        <input type="text" name="consent_signature" required autocomplete="name" placeholder="Full name">
-        <p style="color:#666;font-size:14px;margin-bottom:0">Date: ${new Date().toLocaleDateString()}</p>
-      </div>
+      <p><b>By clicking “I agree, continue” below, you confirm that you have read this form and agree to take part.</b></p>
     </div>`,
   button_label: "I agree, continue",
   on_load: () => {
@@ -211,9 +206,8 @@ const consent = {
   },
   data: { task: "consent" },
   on_finish: d => { if (!d.response) return;   // "I do not agree" ends the study here
-    CONSENTED = true; jsPsych.data.addProperties({ consent_given: true, consent_time: new Date().toISOString() }); CONSENT_RECORD = { name: d.response.consent_signature, time: new Date().toISOString() }; }
+    CONSENTED = true; jsPsych.data.addProperties({ consent_given: true, consent_time: new Date().toISOString() }); }
 };
-let CONSENT_RECORD = null;
 
 const welcome = {
   type: jsPsychHtmlButtonResponse,
@@ -255,9 +249,11 @@ const assignGroup = {
   }
 };
 
+const TEST_AUDIO = "audio/test.wav";
+
 const preload = {
   type: jsPsychPreload,
-  audio: () => STIMULI.map(fileOf),
+  audio: () => [TEST_AUDIO, ...STIMULI.map(fileOf)],
   message: "<p>Loading audio…</p>",
   show_progress_bar: true
 };
@@ -270,7 +266,7 @@ const checkFiles = {
   stimulus: "<p>Checking audio files…</p>",
   data: { task: "setup" },
   on_load: async () => {
-    const files = STIMULI.map(fileOf);
+    const files = [TEST_AUDIO, ...STIMULI.map(fileOf)];
     const ok = await Promise.all(files.map(f =>
       fetch(f, { method: "HEAD", cache: "no-store" }).then(r => r.ok).catch(() => false)));
     MISSING = files.filter((f, i) => !ok[i]);
@@ -344,6 +340,35 @@ function breakTrial(q, b) {
   };
 }
 
+// Audio test: participants can play test.wav as often as they like, then confirm they can hear it.
+let TEST_PLAYS = 0;
+const audioTest = {
+  type: jsPsychHtmlButtonResponse,
+  stimulus: `
+    <p class="instructions">Please be sure to wear headphones for this experiment.
+       This is a test page to make sure that your audio is working.</p>
+    <p><button type="button" class="jspsych-btn" id="play-test" style="font-size:20px">▶ Play audio</button></p>
+    <p class="question">Can you hear this audio?</p>
+    <p id="test-help" class="instructions" style="color:#9a4a0c; display:none">Please check that your headphones
+       are connected and your volume is turned up, then press “Play audio” again.</p>`,
+  choices: ["Yes", "No"],
+  on_load: () => {
+    const audio = new Audio(TEST_AUDIO);
+    document.getElementById("play-test").onclick = () => { audio.currentTime = 0; audio.play(); TEST_PLAYS++; };
+    // "No" doesn't move on: it shows advice so they can fix their audio and try again
+    const btns = document.querySelectorAll("#jspsych-html-button-response-btngroup button");
+    const no = btns[1];
+    const clone = no.cloneNode(true); no.replaceWith(clone);
+    clone.addEventListener("click", e => {
+      e.stopPropagation();
+      document.getElementById("test-help").style.display = "block";
+      jsPsych.data.addProperties({ audio_test_said_no: true });
+    });
+  },
+  data: { task: "audio_test" },
+  on_finish: d => jsPsych.data.addProperties({ audio_test_plays: TEST_PLAYS })
+};
+
 const blocks = [];
 BLOCK_ORDER.forEach((pos, b) => {
   blocks.push({
@@ -397,6 +422,9 @@ const demographics = {
       <div class="q">Do you speak any other languages, and if so, which ones?</div>
       <textarea name="other_languages" rows="2" required></textarea>
 
+      <div class="q">What country do you currently reside in?</div>
+      <input type="text" name="country" required>
+
       <div class="q">Have you or do you currently play an instrument or sing?</div>
       <label><input type="radio" name="music_background" value="yes" required> Yes</label>&nbsp;&nbsp;
       <label><input type="radio" name="music_background" value="no"> No</label>
@@ -443,12 +471,6 @@ const saveData = {
   stimulus: "<p>Saving your responses… please do not close this page.</p>",
   data: { task: "setup" },
   on_load: async () => {
-    if (DATAPIPE_ID !== "" && CONSENT_RECORD) {
-      // consent record (typed name) is saved as its own file, so names are kept apart from responses
-      const c = `"participant_id","consent_signature","consent_time"\n"${PARTICIPANT}","${String(CONSENT_RECORD.name).replace(/"/g, '""')}","${CONSENT_RECORD.time}"\n`;
-      await postJSON("https://pipe.jspsych.org/api/data/",
-        { experimentID: DATAPIPE_ID, filename: `consent_${PARTICIPANT}.csv`, data: c }, 30000);
-    }
     if (DATAPIPE_ID !== "") {
       for (let attempt = 0; attempt < 3 && !SAVED; attempt++) {
         const res = await postJSON("https://pipe.jspsych.org/api/data/",
@@ -484,6 +506,6 @@ const thanks = {
   conditional_function: () => SAVED || DATAPIPE_ID === ""
 };
 
-jsPsych.run([consent, welcome, assignGroup, checkFiles, missingFiles, preload, ...blocks, demographics, saveData, saveFailed, thanks]);
+jsPsych.run([consent, welcome, assignGroup, checkFiles, missingFiles, preload, audioTest, ...blocks, demographics, saveData, saveFailed, thanks]);
 </script>
 </html>
